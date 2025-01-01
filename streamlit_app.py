@@ -11,6 +11,9 @@ import torch
 import torch.utils.data
 from torch.utils.data import DataLoader
 import warnings
+import time
+import psutil
+import plotly.graph_objects as go
 from typing import Optional
 
 warnings.filterwarnings('ignore')
@@ -57,22 +60,35 @@ class AsistenteRAG:
             }
             /* Inputs */
             .stTextInput > div > div {
-                background: rgba(255,255,255,0.08);
+                background: rgba(255,255,255,0.95);
                 border-radius: 10px;
                 border: 1px solid rgba(255,215,0,0.2);
-                color: #fff;
+                color: #16222A;
                 transition: all 0.3s ease;
+            }
+            .stTextInput > div > div input {
+                color: #16222A !important;
             }
             .stTextInput > div > div:focus-within {
                 border-color: #FFD700;
                 box-shadow: 0 0 10px rgba(255,215,0,0.2);
             }
-            /* Selectbox */
+            /* Selectbox y expander */
+            .streamlit-expanderHeader, 
+            .streamlit-expanderContent,
             .stSelectbox > div > div {
-                background: rgba(255,255,255,0.08);
+                background: rgba(255,255,255,0.95) !important;
+                color: #16222A !important;
                 border-radius: 10px;
                 border: 1px solid rgba(255,215,0,0.2);
-                color: #fff;
+            }
+            .streamlit-expanderContent p,
+            .streamlit-expanderContent label,
+            .stSelectbox label {
+                color: #16222A !important;
+            }
+            .stSlider [data-baseweb="slider"] {
+                margin-top: 10px;
             }
             /* Chat container */
             .chat-container {
@@ -84,32 +100,41 @@ class AsistenteRAG:
                 overflow-y: auto;
             }
             .chat-question {
-                background: rgba(255, 215, 0, 0.1);
+                background: rgba(255, 255, 255, 0.95);
                 border-left: 4px solid #FFD700;
                 margin: 10px 0;
                 padding: 15px;
                 border-radius: 10px;
                 animation: slideIn 0.3s ease;
+                color: #16222A;
             }
             .chat-answer {
-                background: rgba(255, 165, 0, 0.1);
+                background: rgba(22, 34, 42, 0.95);
                 border-left: 4px solid #FFA500;
                 margin: 10px 0;
                 padding: 15px;
                 border-radius: 10px;
                 animation: slideIn 0.3s ease;
+                color: #ffffff;
             }
             @keyframes slideIn {
                 from { opacity: 0; transform: translateX(-10px); }
                 to { opacity: 1; transform: translateX(0); }
             }
             .info-card {
-                background: rgba(255,255,255,0.08);
+                background: rgba(255,255,255,0.95);
                 border-radius: 15px;
                 padding: 20px;
                 margin: 10px 0;
                 border: 1px solid rgba(255,215,0,0.2);
                 transition: all 0.3s ease;
+                color: #16222A;
+            }
+            .info-card h3 {
+                color: #16222A !important;
+            }
+            .info-card p {
+                color: #2C3E50 !important;
             }
             .info-card:hover {
                 transform: translateY(-5px);
@@ -145,6 +170,24 @@ class AsistenteRAG:
                     (session_id TEXT, filename TEXT, content TEXT, embedding_model TEXT)''')
         conn.commit()
         conn.close()
+
+    def __init__(self):
+        self.performance_metrics = {
+            'cpu_usage': [],
+            'memory_usage': [],
+            'inference_time': [],
+            'api_costs': []
+        }
+        
+        self.token_costs = {
+            'gpt-3.5-turbo': 0.002,  # USD por 1K tokens
+            'gpt-4': 0.03,           # USD por 1K tokens
+            'gpt-4-turbo-preview': 0.01  # USD por 1K tokens
+        }
+        st.set_page_config(layout="wide", page_title="📚 RAG Pro", page_icon="📚")
+        self.init_styles()
+        self.init_session_state()
+        self.init_db()
 
     def get_device(self) -> str:
         try:
@@ -266,11 +309,61 @@ class AsistenteRAG:
         if st.session_state.vectorstore and st.session_state.api_key_configured:
             query = st.text_input("💬 ¿Qué deseas preguntar sobre el documento?")
             
+            # Mostrar gráficos de rendimiento
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("""
+                    <div class='info-card'>
+                        <h3 style='color: #FFD700;'>📊 Rendimiento del Modelo</h3>
+                        <p>Consumo de recursos y tiempos de respuesta</p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                if len(self.performance_metrics['inference_time']) > 0:
+                    fig1 = go.Figure()
+                    fig1.add_trace(go.Scatter(
+                        y=self.performance_metrics['inference_time'],
+                        mode='lines+markers',
+                        name='Tiempo de Inferencia'
+                    ))
+                    fig1.update_layout(
+                        title='Tiempo de Inferencia por Consulta',
+                        yaxis_title='Segundos',
+                        template='plotly_dark',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)'
+                    )
+                    st.plotly_chart(fig1, use_container_width=True)
+                
+                if len(self.performance_metrics['api_costs']) > 0:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Bar(
+                        y=self.performance_metrics['api_costs'],
+                        name='Coste por Consulta'
+                    ))
+                    fig2.update_layout(
+                        title=f'Coste Total: ${sum(self.performance_metrics["api_costs"]):.4f}',
+                        yaxis_title='USD',
+                        template='plotly_dark',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)'
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+
             if query:
                 with st.spinner("🧠 Generando respuesta..."):
                     try:
+                        start_time = time.time()
+                        cpu_percent = psutil.cpu_percent()
+                        memory_percent = psutil.virtual_memory().percent
+                        
                         docs = st.session_state.vectorstore.similarity_search(query)
                         context = "\n".join(doc.page_content for doc in docs)
+                        
+                        # Estimación aproximada de tokens (caracteres/4)
+                        tokens = len(context + query) / 4
+                        model_cost = self.token_costs[st.session_state.model_name]
+                        estimated_cost = (tokens / 1000) * model_cost
                         
                         prompt = ChatPromptTemplate.from_template("""
                             Usando el siguiente contexto, responde a la pregunta.
@@ -292,6 +385,14 @@ class AsistenteRAG:
                             "context": context,
                             "question": query
                         })
+                        
+                        end_time = time.time()
+                        inference_time = end_time - start_time
+                        
+                        self.performance_metrics['cpu_usage'].append(cpu_percent)
+                        self.performance_metrics['memory_usage'].append(memory_percent)
+                        self.performance_metrics['inference_time'].append(inference_time)
+                        self.performance_metrics['api_costs'].append(estimated_cost)
                         
                         st.session_state.chat_history.append({
                             "q": query,
