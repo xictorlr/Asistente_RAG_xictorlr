@@ -182,7 +182,7 @@ class AsistenteRAG:
         self.token_costs = {
             'gpt-3.5-turbo': 0.002,  # USD por 1K tokens
             'gpt-4': 0.03,           # USD por 1K tokens
-            'gpt-4-turbo-preview': 0.01  # USD por 1K tokens
+            'gpt-4o': 0.01  # USD por 1K tokens
         }
         st.set_page_config(layout="wide", page_title="📚 RAG Pro", page_icon="📚")
         self.init_styles()
