@@ -1,0 +1,8 @@
+langchain-community==0.0.24
+langchain-core==0.1.27
+langchain-openai==0.0.8
+streamlit==1.31.1
+torch==2.2.0
+PyPDF2==3.0.1
+faiss-cpu==1.8.0
+sentence-transformers==2.5.1
